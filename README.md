@@ -151,11 +151,11 @@ PromptBehavior when using OAuth.
 
 ## Links
 
-### [Troubleshooting calendar items] (https://ingogegenwarth.wordpress.com/2015/05/01/troubleshooting-calendar-items/)
+### [Troubleshooting calendar items](https://ingogegenwarth.wordpress.com/2015/05/01/troubleshooting-calendar-items/)
 
-### [Advanced troubleshooting calendar items] (https://ingogegenwarth.wordpress.com/2017/11/20/advanced-cal/)
+### [Advanced troubleshooting calendar items](https://ingogegenwarth.wordpress.com/2017/11/20/advanced-cal/)
 
-### [EWS and OAuth] (https://ingogegenwarth.wordpress.com/2018/08/02/ews-and-oauth/)
+### [EWS and OAuth](https://ingogegenwarth.wordpress.com/2018/08/02/ews-and-oauth/)
 
 ## License
 
