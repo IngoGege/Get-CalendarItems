@@ -4,13 +4,12 @@
 
         Created by: https://ingogegenwarth.wordpress.com/
         Version:    42 ("What do you get if you multiply six by nine?")
-        Changed:    008.07.2018
+        Changed:    07.01.2019
 
         .LINK
         http://gsexdev.blogspot.com/
         https://ingogegenwarth.wordpress.com/2015/05/01/troubleshooting-calendar-items/
         https://ingogegenwarth.wordpress.com/2017/11/20/advanced-cal/
-        https://ingogegenwarth.wordpress.com/2018/08/02/ews-and-oauth/
 
         .DESCRIPTION
 
@@ -206,7 +205,7 @@ Param (
         Mandatory=$false,
         Position=13)]
     [ValidateSet("EwsLegacyId","EwsId","EntryId","HexEntryId","StoreId","OwaId")]
-    [System.Management.Automation.SwitchParameter]
+    [System.String]
     $DestinationID,
 
     [Parameter(
@@ -707,6 +706,45 @@ Begin {
         }
     }
 
+    function ConvertFrom-PidLidMeetingType
+    {
+        [CmdletBinding()]
+        [Alias()]
+        [OutputType([System.String])]
+        Param
+        (
+            [Parameter(
+                    Mandatory=$true,
+                    ValueFromPipelineByPropertyName=$false,
+            Position=0)]
+            [System.Int32]
+            $PidLidMeetingType
+        )
+    
+        Begin
+        {
+            [System.String]$RetunValue =  ''
+        }
+        Process
+        {
+            Switch ($PidLidMeetingType)
+            {
+                0 {$RetunValue = "Empty"}
+                1 {$RetunValue = "Request"}
+                65536 {$RetunValue = "Full"}
+                131072 {$RetunValue = "Info"}
+                524288 {$RetunValue = "OutOfDate"}
+                1048576 {$RetunValue = "DelegatorCopy"}
+            }    
+    
+        }
+        End
+        {
+            Write-Verbose -Message "PidLidMeetingTypeValue:$($PidLidMeetingType)"
+            return ($RetunValue)
+        }
+    }
+
     #some checks for ambiguous parameters
     If (($Subject -and ($GlobalObjectID -or $CleanGlobalObjectID)) -or ($GlobalObjectID -and $CleanGlobalObjectID))
     {
@@ -1014,6 +1052,14 @@ return true;
             $EstimatedTentativeCount       = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::CalendarAssistant,"EstimatedTentativeCount",[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Integer)
             $EstimatedDeclineCount           = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::CalendarAssistant,"EstimatedDeclineCount",[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Integer)
             #$v2CalendarLogging             = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::CalendarAssistant,0x0005,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Binary)
+            $PR_RECIPIENT_TRACKSTATUS       = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition(0x5FFF,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Integer)
+            $PidLidMeetingType              = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x0026,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Integer)
+            #$PidLidAppointmentStartWhole    = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x820D,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::SystemTime)
+            #$PidLidAppointmentEndWhole      = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x820E,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::SystemTime)
+            $PidLidOldWhenStartWhole        = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x0029,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::SystemTime)
+            $PidLidOldWhenEndWhole          = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x002A,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::SystemTime)
+            $PidTagResponseRequested        = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition(0x0063,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Boolean)
+
             $ItemView =  New-Object Microsoft.Exchange.WebServices.Data.ItemView(1000)
 
             If ($AllItemProps){
@@ -1065,6 +1111,14 @@ return true;
             $ItemPropset.Add($EstimtedAcceptCount)
             $ItemPropset.Add($EstimatedTentativeCount)
             $ItemPropset.Add($EstimatedDeclineCount)
+            $ItemPropset.Add($PR_RECIPIENT_TRACKSTATUS)
+            $ItemPropset.Add($PidLidMeetingType)
+            #$ItemPropset.Add($PidLidAppointmentStartWhole)
+            #$ItemPropset.Add($PidLidAppointmentEndWhole)
+            $ItemPropset.Add($PidLidOldWhenStartWhole)
+            $ItemPropset.Add($PidLidOldWhenEndWhole)
+            $ItemPropset.Add($PidTagResponseRequested)
+            
             #default searchfiltercollection
             $SearchFilterCollection = new-object  Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection([Microsoft.Exchange.WebServices.Data.LogicalOperator]::And)
             $SearchFilterCollectionItemClass = new-object  Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection([Microsoft.Exchange.WebServices.Data.LogicalOperator]::Or)
@@ -1297,6 +1351,7 @@ return true;
                                     $data | add-member -type NoteProperty -Name FolderPath -Value $fpath
                                     $data | add-member -type NoteProperty -Name Client -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '11'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '11'}).Value})
                                     $data | add-member -type NoteProperty -Name Action -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}).Value})
+                                    $data | add-member -type NoteProperty -Name PidLidMeetingType -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '38')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}){ConvertFrom-PidLidMeetingType ($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '38')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}).Value})
                                     $data | add-member -type NoteProperty -Name ItemClass -Value $Item.ItemClass
                                     $data | add-member -type NoteProperty -Name 'PR_Processed' -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '32001'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '32001'}).Value})
                                     $data | add-member -type NoteProperty -Name CalendarProcessed -Value ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '1'}).Value
@@ -1323,6 +1378,8 @@ return true;
                                         }
                                     }
 
+                                    $data | add-member -type NoteProperty -Name PidLidOldWhenStartWhole -Value $( If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '41')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '41')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}).Value} )
+
                                     If (($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}) -and ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'})){
                                         Write-Verbose "Both properties exist. Will caculate end time..."
                                         #$data | add-member -type NoteProperty -Name End -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}){ConvertUTCTimeToTimeZone -UTCTime $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}).Value -TargetZone $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value} )
@@ -1345,6 +1402,7 @@ return true;
                                         }
                                     }
 
+                                    $data | add-member -type NoteProperty -Name PidLidOldWhenEndWhole -Value $( If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '42')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '42')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}).Value} )
                                     $data | add-member -type NoteProperty -Name IsRecurring -Value $Item.IsRecurring
                                     $data | add-member -type NoteProperty -Name IsException -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '10')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '10')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}).Value})
                                     $data | add-member -type NoteProperty -Name Recurrence -Value $(Format-Recurrence -Item $Item)
