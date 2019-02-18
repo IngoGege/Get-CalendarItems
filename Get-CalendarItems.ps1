@@ -4,7 +4,7 @@
 
         Created by: https://ingogegenwarth.wordpress.com/
         Version:    42 ("What do you get if you multiply six by nine?")
-        Changed:    07.01.2019
+        Changed:    18.02.2019
 
         .LINK
         http://gsexdev.blogspot.com/
@@ -1060,7 +1060,7 @@ return true;
             $PidLidOldWhenEndWhole          = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x002A,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::SystemTime)
             $PidTagResponseRequested        = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition(0x0063,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Boolean)
 
-            $ItemView =  New-Object Microsoft.Exchange.WebServices.Data.ItemView(1000)
+            #$ItemView =  New-Object Microsoft.Exchange.WebServices.Data.ItemView(10,0,[Microsoft.Exchange.WebServices.Data.OffsetBasePoint]::Beginning)
 
             If ($AllItemProps){
                 $ItemPropset= new-object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
@@ -1257,7 +1257,8 @@ return true;
                 $AllFolderResult = $AllFolderResult | Where-Object -FilterScript {$_.Displayname -ne 'Audits'}
                 [int]$i='1'
                 ForEach ($Folder in $AllFolderResult){
-                    #Write-Output "Working on  $($Folder.DisplayName)"
+                    $ItemView =  New-Object Microsoft.Exchange.WebServices.Data.ItemView(1000,0,[Microsoft.Exchange.WebServices.Data.OffsetBasePoint]::Beginning)
+                    #Write-Host "Working on  $($Folder.DisplayName)"
                     #show progress
                     Write-Progress `
                     -id 1 `
@@ -1445,13 +1446,21 @@ return true;
                                         #get bin value
                                         $binVal = ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'AttendeeListDetails'}).Value
                                         #convert bin value to string
-                                        $JsonString = ConvertFrom-Json $([System.Text.Encoding]::UTF8.GetString($binVal))
-                                        #get NoteProperty
-                                        [System.String[]]$entryNames = ( $JsonString | Get-Member -MemberType NoteProperty).Name
-                                        ForEach ($Name in $entryNames) {
-                                            $attendeeCol += $JsonString.$($Name) | Select-Object DisplayName,ResponseType,UtcReplyTime
+                                        try {
+                                            $JsonString = ConvertFrom-Json $([System.Text.Encoding]::UTF8.GetString($binVal))
+                                            #get NoteProperty
+                                            [System.String[]]$entryNames = ( $JsonString | Get-Member -MemberType NoteProperty).Name
+                                            ForEach ($Name in $entryNames) {
+                                                $attendeeCol += $JsonString.$($Name) | Select-Object DisplayName,ResponseType,UtcReplyTime
+                                            }
+                                            $data | add-member -type NoteProperty -Name AttendeeListDetails -Value $(($attendeeCol | foreach{"$($_.DisplayName):$($_.ResponseType):$($_.UtcReplyTime)"}) -join '|')
                                         }
-                                        $data | add-member -type NoteProperty -Name AttendeeListDetails -Value $(($attendeeCol | foreach{"$($_.DisplayName):$($_.ResponseType):$($_.UtcReplyTime)"}) -join '|')
+                                        catch
+                                        {
+                                            Write-Verbose "Couldn't convert AttendeeListDetails"
+                                            $data | add-member -type NoteProperty -Name AttendeeListDetails -Value "Error while computing"
+                                        }
+                                        
                                     }
 
                                     $data | add-member -type NoteProperty -Name UCMeetingSetting -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'UcMeetingSetting'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'UcMeetingSetting'}).Value})
@@ -1509,8 +1518,8 @@ return true;
                                     $data | add-member -type NoteProperty -Name ItemClass -Value $Item.ItemClass
                                     $data | add-member -type NoteProperty -Name CleanGlobalObjectID -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '35'}){[System.BitConverter]::ToString(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '35'}).Value) -Replace '-',''})
                                     $data | add-member -type NoteProperty -Name Organizer -Value $Item.Organizer
-                                    $data | add-member -type NoteProperty -Name RequiredAttendees -Value $(If($Item.RequiredAttendees.Count -gt '0'){[System.String]::Join(";",$($Item.RequiredAttendees| ForEach-Object -Process {$_.Address}))})
-                                    $data | add-member -type NoteProperty -Name OptionalAttendees -Value $(If($Item.OptionalAttendees.Count -gt '0'){[System.String]::Join(";",$($Item.OptionalAttendees| ForEach-Object -Process {$_.Address}))})
+                                    $data | add-member -type NoteProperty -Name RequiredAttendees -Value $( If($Item.RequiredAttendees.Count -gt '0'){ [System.String]::Join(";",$($Item.RequiredAttendees| ForEach-Object -Process {$_.Address})) } )
+                                    $data | add-member -type NoteProperty -Name OptionalAttendees -Value $( If($Item.OptionalAttendees.Count -gt '0'){ [System.String]::Join(";",$($Item.OptionalAttendees| ForEach-Object -Process {$_.Address})) } )
                                     $data | add-member -type NoteProperty -Name IsRecurring -Value $Item.IsRecurring
                                     $data | add-member -type NoteProperty -Name DateTimeCreated -Value $Item.DateTimeCreated
                                     $data | add-member -type NoteProperty -Name DateTimeReceived -Value $Item.DateTimeReceived
@@ -1527,8 +1536,10 @@ return true;
                                 $p++
                             }
                         }
+
                         $ItemView.Offset = $FindItems.NextPageOffset
-                    }while($FindItems.MoreAvailable)
+
+                    }while($FindItems.MoreAvailable -eq $true)
                     Write-Progress -id 2 -ParentId 1 -Activity "Processing item - $($Item.Subject)" -Status "Ready" -Completed
                     $i++
                 }
