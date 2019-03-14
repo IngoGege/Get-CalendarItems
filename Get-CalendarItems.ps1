@@ -4,7 +4,7 @@
 
         Created by: https://ingogegenwarth.wordpress.com/
         Version:    42 ("What do you get if you multiply six by nine?")
-        Changed:    18.02.2019
+        Changed:    14.03.2019
 
         .LINK
         http://gsexdev.blogspot.com/
@@ -298,7 +298,13 @@ Param (
         Position=27)]
     [ValidateSet('Always','Auto','Never','RefreshSession')]
     [System.String]
-    $PromptBehavior = 'Auto'
+    $PromptBehavior = 'Auto',
+
+    [Parameter(
+        Mandatory=$false,
+        Position=28)]
+    [System.Int16]
+    $ItemPageSize = '1000'
 )
 
 Begin {
@@ -515,132 +521,132 @@ Begin {
             [System.Management.Automation.SwitchParameter]
             $TokenForResourceExists
         )
-    
-    Begin
-    {
-        try
+
+        Begin
         {
-            If([System.String]::IsNullOrEmpty($ADALPath))
+            try
             {
-                $ADALPath = (Get-ChildItem -Path ($env:LOCALAPPDATA +'\Apps\2.0') -Recurse -Include Microsoft.IdentityModel.Clients.ActiveDirectory.dll | Select-Object -First 1)
-            }
-            Import-Module $ADALPath -Force 
-        }
-        catch
-        {
-            #create object
-            $returnValue = New-Object -TypeName PSObject
-            #get all properties from last error
-            $ErrorProperties = $Error[0] | Get-Member -MemberType Property
-            #add existing properties to object
-            foreach ($Property in $ErrorProperties)
-            {
-                if ($Property.Name -eq 'InvocationInfo')
+                If([System.String]::IsNullOrEmpty($ADALPath))
                 {
-                    $returnValue | Add-Member -Type NoteProperty -Name 'InvocationInfo' -Value $($Error[0].InvocationInfo.PositionMessage)
+                    $ADALPath = (Get-ChildItem -Path ($env:LOCALAPPDATA +'\Apps\2.0') -Recurse -Include Microsoft.IdentityModel.Clients.ActiveDirectory.dll | Select-Object -First 1)
                 }
-                else
-                {
-                    $returnValue | Add-Member -Type NoteProperty -Name $($Property.Name) -Value $($Error[0].$($Property.Name))
-                }
+                Import-Module $ADALPath -Force 
             }
-            #return object
-            $returnValue
-            break
-        }
-    }
-    Process
-    {
-        try
-        {
-            $resource = $connectionUri.Scheme + [System.Uri]::SchemeDelimiter + $connectionUri.Host
-            If ($TokenForResourceExists)
+            catch
             {
-                [System.Boolean]$result = $false
-                #get existing tokens
-                $TokenCache = ([Microsoft.IdentityModel.Clients.ActiveDirectory.TokenCache]::DefaultShared).ReadItems()
-                If($TokenCache.Count -gt 0)
+                #create object
+                $returnValue = New-Object -TypeName PSObject
+                #get all properties from last error
+                $ErrorProperties = $Error[0] | Get-Member -MemberType Property
+                #add existing properties to object
+                foreach ($Property in $ErrorProperties)
                 {
-                    ForEach($Token in $TokenCache)
+                    if ($Property.Name -eq 'InvocationInfo')
                     {
-                        If($Token.Resource -eq $resource)
+                        $returnValue | Add-Member -Type NoteProperty -Name 'InvocationInfo' -Value $($Error[0].InvocationInfo.PositionMessage)
+                    }
+                    else
+                    {
+                        $returnValue | Add-Member -Type NoteProperty -Name $($Property.Name) -Value $($Error[0].$($Property.Name))
+                    }
+                }
+                #return object
+                $returnValue
+                break
+            }
+        }
+        Process
+        {
+            try
+            {
+                $resource = $connectionUri.Scheme + [System.Uri]::SchemeDelimiter + $connectionUri.Host
+                If ($TokenForResourceExists)
+                {
+                    [System.Boolean]$result = $false
+                    #get existing tokens
+                    $TokenCache = ([Microsoft.IdentityModel.Clients.ActiveDirectory.TokenCache]::DefaultShared).ReadItems()
+                    If($TokenCache.Count -gt 0)
+                    {
+                        ForEach($Token in $TokenCache)
                         {
-                            $result = $true
-                            break
+                            If($Token.Resource -eq $resource)
+                            {
+                                $result = $true
+                                break
+                            }
                         }
-                    }
-                }
-            }
-            Else
-            {
-                $azureADAuthorizationEndpointUri = 'https://login.windows.net/common'
-                $AuthContext = New-Object Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationContext($azureADAuthorizationEndpointUri)
-                If (-not [System.String]::IsNullOrEmpty($UserPrincipalName))
-                {
-                    $UserID = [Microsoft.IdentityModel.Clients.ActiveDirectory.UserIdentifier]::new($UserPrincipalName,'RequiredDisplayableId')
-                }
-                Write-Verbose "FileVersion:$((Get-Item $ADALPath).VersionInfo.FileVersion)"
-                If ((Get-Module -Name  Microsoft.IdentityModel.Clients.ActiveDirectory).Version.Major -lt 3)
-                {
-                    Write-Verbose "Looks like ADALv2"
-                    $ADALv2PromptBehavior = [Microsoft.IdentityModel.Clients.ActiveDirectory.PromptBehavior]::Always
-                    If ($UserID)
-                    {
-                        $token = $AuthContext.AcquireToken($resource,$clientId,$redirectUri,$ADALv2PromptBehavior,$UserID)
-                    }
-                    Else
-                    {
-                        $token = $AuthContext.AcquireToken($resource,$clientId,$redirectUri,[Microsoft.IdentityModel.Clients.ActiveDirectory.PromptBehavior]::$PromptBehavior)
                     }
                 }
                 Else
                 {
-                    Write-Verbose "Looks like ADALv3"
-                    $ADALv3PromptBehavior = New-Object Microsoft.IdentityModel.Clients.ActiveDirectory.PlatformParameters -ArgumentList $PromptBehavior
-                    If ($UserID)
+                    $azureADAuthorizationEndpointUri = 'https://login.windows.net/common'
+                    $AuthContext = New-Object Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationContext($azureADAuthorizationEndpointUri)
+                    If (-not [System.String]::IsNullOrEmpty($UserPrincipalName))
                     {
-                        $token = ($AuthContext.AcquireTokenAsync($resource,$clientId,$redirectUri,$ADALv3PromptBehavior,$UserID)).Result
+                        $UserID = [Microsoft.IdentityModel.Clients.ActiveDirectory.UserIdentifier]::new($UserPrincipalName,'RequiredDisplayableId')
+                    }
+                    Write-Verbose "FileVersion:$((Get-Item $ADALPath).VersionInfo.FileVersion)"
+                    If ((Get-Module -Name  Microsoft.IdentityModel.Clients.ActiveDirectory).Version.Major -lt 3)
+                    {
+                        Write-Verbose "Looks like ADALv2"
+                        $ADALv2PromptBehavior = [Microsoft.IdentityModel.Clients.ActiveDirectory.PromptBehavior]::Always
+                        If ($UserID)
+                        {
+                            $token = $AuthContext.AcquireToken($resource,$clientId,$redirectUri,$ADALv2PromptBehavior,$UserID)
+                        }
+                        Else
+                        {
+                            $token = $AuthContext.AcquireToken($resource,$clientId,$redirectUri,[Microsoft.IdentityModel.Clients.ActiveDirectory.PromptBehavior]::$PromptBehavior)
+                        }
                     }
                     Else
                     {
-                        $token = ($AuthContext.AcquireTokenAsync($resource,$clientId,$redirectUri,$ADALv3PromptBehavior)).Result
+                        Write-Verbose "Looks like ADALv3"
+                        $ADALv3PromptBehavior = New-Object Microsoft.IdentityModel.Clients.ActiveDirectory.PlatformParameters -ArgumentList $PromptBehavior
+                        If ($UserID)
+                        {
+                            $token = ($AuthContext.AcquireTokenAsync($resource,$clientId,$redirectUri,$ADALv3PromptBehavior,$UserID)).Result
+                        }
+                        Else
+                        {
+                            $token = ($AuthContext.AcquireTokenAsync($resource,$clientId,$redirectUri,$ADALv3PromptBehavior)).Result
+                        }
                     }
                 }
             }
-        }
-        catch
-        {
-            #create object
-            $returnValue = New-Object -TypeName PSObject
-            #get all properties from last error
-            $ErrorProperties =$Error[0] | Get-Member -MemberType Property
-            #add existing properties to object
-            foreach ($Property in $ErrorProperties)
+            catch
             {
-                if ($Property.Name -eq 'InvocationInfo')
+                #create object
+                $returnValue = New-Object -TypeName PSObject
+                #get all properties from last error
+                $ErrorProperties =$Error[0] | Get-Member -MemberType Property
+                #add existing properties to object
+                foreach ($Property in $ErrorProperties)
                 {
-                    $returnValue | Add-Member -Type NoteProperty -Name 'InvocationInfo' -Value $($Error[0].InvocationInfo.PositionMessage)
+                    if ($Property.Name -eq 'InvocationInfo')
+                    {
+                        $returnValue | Add-Member -Type NoteProperty -Name 'InvocationInfo' -Value $($Error[0].InvocationInfo.PositionMessage)
+                    }
+                    else {
+                        $returnValue | Add-Member -Type NoteProperty -Name $($Property.Name) -Value $($Error[0].$($Property.Name))
+                    }
                 }
-                else {
-                    $returnValue | Add-Member -Type NoteProperty -Name $($Property.Name) -Value $($Error[0].$($Property.Name))
-                }
+                #return object
+                $returnValue
+                break
             }
-            #return object
-            $returnValue
-            break
         }
-    }
-    End
-    {
-        If($TokenForResourceExists)
+        End
         {
-            $result
+            If($TokenForResourceExists)
+            {
+                $result
+            }
+            Else
+            {
+                $token
+            }
         }
-        Else
-        {
-            $token
-        }
-    }
     }
 
     function Get-AutoDV2
@@ -671,8 +677,6 @@ Begin {
         {
             If ($Server)
             {
-                #$Domain = $EmailAddress.Split("@")[1]
-                #$Server = "autodiscover." + $Domain
                 $URL = "https://$server/autodiscover/autodiscover.json?Email=$EmailAddress&Protocol=$Protocol"
             }
             Else
@@ -1026,6 +1030,7 @@ return true;
 
             #define propertyset for items
             $Client                        = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::CalendarAssistant,0x000B,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::String)
+            $OrgClient                     = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::CalendarAssistant,0x0023,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::String)
             $Action                        = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::CalendarAssistant,0x0006,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::String)
             $PidLidGlobalObjectId          = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x0003,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Binary)
             $PidLidCleanGlobalObjectId     = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x0023,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Binary)
@@ -1051,16 +1056,11 @@ return true;
             $EstimtedAcceptCount          = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::CalendarAssistant,"EstimatedAcceptCount",[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Integer)
             $EstimatedTentativeCount       = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::CalendarAssistant,"EstimatedTentativeCount",[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Integer)
             $EstimatedDeclineCount           = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::CalendarAssistant,"EstimatedDeclineCount",[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Integer)
-            #$v2CalendarLogging             = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::CalendarAssistant,0x0005,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Binary)
             $PR_RECIPIENT_TRACKSTATUS       = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition(0x5FFF,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Integer)
             $PidLidMeetingType              = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x0026,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Integer)
-            #$PidLidAppointmentStartWhole    = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x820D,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::SystemTime)
-            #$PidLidAppointmentEndWhole      = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x820E,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::SystemTime)
             $PidLidOldWhenStartWhole        = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x0029,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::SystemTime)
             $PidLidOldWhenEndWhole          = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x002A,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::SystemTime)
             $PidTagResponseRequested        = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition(0x0063,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Boolean)
-
-            #$ItemView =  New-Object Microsoft.Exchange.WebServices.Data.ItemView(10,0,[Microsoft.Exchange.WebServices.Data.OffsetBasePoint]::Beginning)
 
             If ($AllItemProps){
                 $ItemPropset= new-object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
@@ -1107,17 +1107,15 @@ return true;
             $ItemPropset.Add($PidLidTimeZoneDescription)
             $ItemPropset.Add($UCMeetingSettingStr)
             $ItemPropset.Add($AttendeeListDetails)
-            #$ItemPropset.Add($v2CalendarLogging)
             $ItemPropset.Add($EstimtedAcceptCount)
             $ItemPropset.Add($EstimatedTentativeCount)
             $ItemPropset.Add($EstimatedDeclineCount)
             $ItemPropset.Add($PR_RECIPIENT_TRACKSTATUS)
             $ItemPropset.Add($PidLidMeetingType)
-            #$ItemPropset.Add($PidLidAppointmentStartWhole)
-            #$ItemPropset.Add($PidLidAppointmentEndWhole)
             $ItemPropset.Add($PidLidOldWhenStartWhole)
             $ItemPropset.Add($PidLidOldWhenEndWhole)
             $ItemPropset.Add($PidTagResponseRequested)
+            $ItemPropset.Add($OrgClient)
             
             #default searchfiltercollection
             $SearchFilterCollection = new-object  Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection([Microsoft.Exchange.WebServices.Data.LogicalOperator]::And)
@@ -1140,8 +1138,6 @@ return true;
 
             #search by subject
             If ($Subject){
-                #$SubjectFilter = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+ContainsSubstring([Microsoft.Exchange.WebServices.Data.EmailMessageSchema]::Subject, "$Subject")
-                #$SearchFilterCollection.Add($SubjectFilter)
                 $SearchFilterCollectionSubject = new-object  Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection([Microsoft.Exchange.WebServices.Data.LogicalOperator]::OR)
                 ForEach ($Sub in $Subject)
                 {
@@ -1152,9 +1148,6 @@ return true;
 
             #search by CleanGlobalObjectID
             If($CleanGlobalObjectID){
-                #$CleanGlobalObjectID_Bin = HexToBin $CleanGlobalObjectID
-                #$CleanGOIDFilter = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+IsEqualTo($PidLidCleanGlobalObjectId,[System.Convert]::ToBase64String($CleanGlobalObjectID_Bin))
-                #$SearchFilterCollection.Add($CleanGOIDFilter)
                 $SearchFilterCollectionCleanGlobalObjectID = new-object  Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection([Microsoft.Exchange.WebServices.Data.LogicalOperator]::OR)
                 Foreach ($CGOID in $CleanGlobalObjectID)
                 {
@@ -1165,9 +1158,6 @@ return true;
 
             #search by GlobalObjectID
             If($GlobalObjectID){
-                #$GlobalObjectID_Bin = HexToBin $GlobalObjectID
-                #$GOIDFilter = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+IsEqualTo($PidLidGlobalObjectId, [System.Convert]::ToBase64String($GlobalObjectID_Bin))
-                #$SearchFilterCollection.Add($GOIDFilter)
                 $SearchFilterCollectionGlobalObjectID = new-object  Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection([Microsoft.Exchange.WebServices.Data.LogicalOperator]::OR)
                 Foreach ($GOID in $GlobalObjectID)
                 {
@@ -1257,7 +1247,7 @@ return true;
                 $AllFolderResult = $AllFolderResult | Where-Object -FilterScript {$_.Displayname -ne 'Audits'}
                 [int]$i='1'
                 ForEach ($Folder in $AllFolderResult){
-                    $ItemView =  New-Object Microsoft.Exchange.WebServices.Data.ItemView(1000,0,[Microsoft.Exchange.WebServices.Data.OffsetBasePoint]::Beginning)
+                    $ItemView =  New-Object Microsoft.Exchange.WebServices.Data.ItemView($ItemPageSize,0,[Microsoft.Exchange.WebServices.Data.OffsetBasePoint]::Beginning)
                     #Write-Host "Working on  $($Folder.DisplayName)"
                     #show progress
                     Write-Progress `
@@ -1280,7 +1270,13 @@ return true;
                     do {
                         $FindItems = $Service.FindItems($Folder.Id,$SearchFilterCollection,$ItemView)
                         If ($FindItems.Items.Count -ge '1'){
-                            [Void]$service.LoadPropertiesForItems($FindItems,$ItemPropset)
+                            $Props = $service.LoadPropertiesForItems($FindItems,$ItemPropset)
+                            If (($Props.Result -notmatch 'Success' ).Count -gt 1)
+                            {
+                                Write-Warning 'Error occured while loading additional properties!'
+                                Write-Warning 'Decreasing PageSize might avoid errors!'
+                                Write-Warning $($Props.get_ErrorCode() | group | Where-Object {$_.Name -ne 'NoError'} | sort Count| select Count,Name | Out-String)
+                            }
                             [int]$y='1'
                             [int]$z= '0'
                             If ($DestinationID){
@@ -1350,7 +1346,8 @@ return true;
                                     $data | add-member -type NoteProperty -Name Creator -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '16376'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '16376'}).Value})
                                     $data | add-member -type NoteProperty -Name Subject -Value $Item.Subject
                                     $data | add-member -type NoteProperty -Name FolderPath -Value $fpath
-                                    $data | add-member -type NoteProperty -Name Client -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '11'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '11'}).Value})
+                                    $data | add-member -type NoteProperty -Name Client -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '11')-and ($_.PropertyDefinition.MapiType -eq 'String')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '11')-and ($_.PropertyDefinition.MapiType -eq 'String')}).Value})
+                                    $data | add-member -type NoteProperty -Name OriginClient -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '35')-and ($_.PropertyDefinition.MapiType -eq 'String')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '35')-and ($_.PropertyDefinition.MapiType -eq 'String')}).Value})
                                     $data | add-member -type NoteProperty -Name Action -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}).Value})
                                     $data | add-member -type NoteProperty -Name PidLidMeetingType -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '38')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}){ConvertFrom-PidLidMeetingType ($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '38')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}).Value})
                                     $data | add-member -type NoteProperty -Name ItemClass -Value $Item.ItemClass
@@ -1359,7 +1356,6 @@ return true;
 
                                     If(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}) -and ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'})){
                                         Write-Verbose "Both properties exist. Will caculate start time..."
-                                        #$data | add-member -type NoteProperty -Name Start -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}){ConvertUTCTimeToTimeZone -UTCTime $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}).Value -TargetZone $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value} )
                                         If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}){
                                             $UTCTime = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}).Value
                                             $TargetZone = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value
@@ -1383,7 +1379,6 @@ return true;
 
                                     If (($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}) -and ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'})){
                                         Write-Verbose "Both properties exist. Will caculate end time..."
-                                        #$data | add-member -type NoteProperty -Name End -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}){ConvertUTCTimeToTimeZone -UTCTime $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}).Value -TargetZone $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value} )
                                         If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}){
                                             $UTCTime = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}).Value
                                             $TargetZone = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value
@@ -1409,7 +1404,7 @@ return true;
                                     $data | add-member -type NoteProperty -Name Recurrence -Value $(Format-Recurrence -Item $Item)
                                     $data | add-member -type NoteProperty -Name PidLidClientIntent -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '21'}){ConvertFrom-ClientIntent -ClientIntentValue ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '21'}).Value})
                                     $data | add-member -type NoteProperty -Name PidLidChangeHighlight -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33284'}){ConvertFrom-ChangeHighlight -ChangeHighlightValue ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33284'}).Value})
-                                    $data | add-member -type NoteProperty -Name CleanGlobalObjectID -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '35'}){[System.BitConverter]::ToString(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '35'}).Value) -Replace '-',''})
+                                    $data | add-member -type NoteProperty -Name CleanGlobalObjectID -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '35') -and ($_.PropertyDefinition.MapiType -eq 'Binary')}){[System.BitConverter]::ToString(($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '35') -and ($_.PropertyDefinition.MapiType -eq 'Binary')}).Value) -Replace '-',''})
                                     $data | add-member -type NoteProperty -Name GlobalObjectID -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '3'}){[System.BitConverter]::ToString(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '3'}).Value) -Replace '-',''})
                                     If ($DestinationID){
                                         $data | add-member -type NoteProperty -Name $AlternateIDName -Value $($Converted[$z].ConvertedId.UniqueId)
@@ -1423,15 +1418,6 @@ return true;
                                     $data | add-member -type NoteProperty -Name ResponsibleUserName -Value ($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '10') -and ($_.PropertyDefinition.PropertySet -eq 'CalendarAssistant')}).Value
                                     $data | add-member -type NoteProperty -Name PR_SENDER_EMAIL_ADDRESS -Value ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '3103'}).Value
                                     $data | add-member -type NoteProperty -Name PR_SENT_REPRESENTING_EMAIL_ADDRESS -Value ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '101'}).Value
-                                    <##If ( ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'EstimatedAcceptCount'}).Count -gt 1 ) {
-                                        $data | add-member -type NoteProperty -Name EstimatedAcceptCount -Value $( ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'EstimatedAcceptCount'}).Value )
-                                    }
-                                    If ( ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'EstimatedTentativeCount'}).Count -gt 1 ) {
-                                        $data | add-member -type NoteProperty -Name EstimatedTentativeCount -Value $( ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'EstimatedTentativeCount'}).Value )
-                                    }
-                                    If ( ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'EstimatedDeclineCount'}).Count -gt 1 ) {
-                                        $data | add-member -type NoteProperty -Name EstimatedDeclineCount -Value $( ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'EstimatedDeclineCount'}).Value )
-                                    }##>
                                     If (($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -match 'Estimated'}).Count -gt 0) {
                                         #add EstimatedResponseCount
                                         [System.String]$estimatedResponseCount = $null
@@ -1474,7 +1460,6 @@ return true;
                                     $data | add-member -type NoteProperty -Name Action -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}).Value})
                                     If(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}) -and ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'})){
                                         Write-Verbose "Both properties exist. Will caculate start time..."
-                                        #$data | add-member -type NoteProperty -Name Start -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}){ConvertUTCTimeToTimeZone -UTCTime $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}).Value -TargetZone $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value} )
                                         If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}){
                                             $UTCTime = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}).Value
                                             $TargetZone = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value
@@ -1496,7 +1481,6 @@ return true;
 
                                     If (($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}) -and ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'})){
                                         Write-Verbose "Both properties exist. Will caculate end time..."
-                                        #$data | add-member -type NoteProperty -Name End -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}){ConvertUTCTimeToTimeZone -UTCTime $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}).Value -TargetZone $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value} )
                                         If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}){
                                             $UTCTime = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}).Value
                                             $TargetZone = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value
