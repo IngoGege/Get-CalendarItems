@@ -842,7 +842,7 @@ Process {
             }
 
             ## Set Exchange Version
-            $ExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2010_SP2
+            $ExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013_SP1
             ## Create Exchange Service Object
             $Service = New-Object -TypeName Microsoft.Exchange.WebServices.Data.ExchangeService -ArgumentList ($ExchangeVersion)
             #$service.PreAuthenticate = $true
@@ -1284,7 +1284,7 @@ return true;
                             $Props = $service.LoadPropertiesForItems($FindItems,$ItemPropset)
                             If (($Props.Result -notmatch 'Success' ).Count -gt 1)
                             {
-                                Write-Warning 'Error occured while loading additional properties!'
+                                Write-Warning "Error occured while loading additional properties for folder $($Folder.DisplayName)!"
                                 Write-Warning 'Decreasing PageSize might avoid errors!'
                                 Write-Warning $($Props.get_ErrorCode() | group | Where-Object {$_.Name -ne 'NoError'} | sort Count| select Count,Name | Out-String)
                             }
