@@ -1096,6 +1096,7 @@ return true;
             $PidLidOldWhenEndWhole         = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x002A,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::SystemTime)
             $PidTagResponseRequested       = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition(0x0063,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Boolean)
             $ItemVersion                   = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::CalendarAssistant, 0x0016,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Integer)
+            $OriginalLastModifiedTime      = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::CalendarAssistant, 0x0009,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::SystemTime)
 
             If ($AllItemProps){
                 $ItemPropset= new-object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
@@ -1154,6 +1155,7 @@ return true;
             $ItemPropset.Add($OrgClient)
             $ItemPropset.Add($ItemVersion)
             $ItemPropset.Add([Microsoft.Exchange.WebServices.Data.ItemSchema]::Attachments)
+            $ItemPropset.Add($OriginalLastModifiedTime)
             
             #default searchfiltercollection
             $SearchFilterCollection = new-object  Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection([Microsoft.Exchange.WebServices.Data.LogicalOperator]::And)
@@ -1464,6 +1466,8 @@ return true;
                                             $data | add-member -type NoteProperty -Name LastModifiedTimeUTC -Value $( Get-Date $Item.LastModifiedTime.ToUniversalTime() -Format $($culture.DateTimeFormat.FullDateTimePattern.ToString().Replace(':ss',':ss.fff')))
                                         }
                                     }
+
+                                    $data | add-member -type NoteProperty -Name OriginLastModifiedTimeUTC -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '9'}){Get-Date ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '9'}).Value -Format $($DateFormat) })
                                     $data | add-member -type NoteProperty -Name Mailbox -Value $MailboxName
                                     If ($AllItemProps){
                                         $data | add-member -type NoteProperty -Name Item -Value $Item
