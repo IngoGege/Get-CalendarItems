@@ -4,7 +4,7 @@
 
         Created by: https://ingogegenwarth.wordpress.com/
         Version:    42 ("What do you get if you multiply six by nine?")
-        Changed:    29.03.2019
+        Changed:    16.09.2019
 
         .LINK
         http://gsexdev.blogspot.com/
@@ -304,7 +304,14 @@ Param (
         Mandatory=$false,
         Position=28)]
     [System.Int16]
-    $ItemPageSize = '1000'
+    $ItemPageSize = '1000',
+
+    [Parameter(
+        Mandatory=$false,
+        Position=29)]
+    [System.Management.Automation.SwitchParameter]
+    $CalendarLogCleanup
+
 )
 
 Begin {
@@ -741,7 +748,7 @@ Begin {
                 131072 {$RetunValue = "Info"}
                 524288 {$RetunValue = "OutOfDate"}
                 1048576 {$RetunValue = "DelegatorCopy"}
-            }    
+            }
     
         }
         End
@@ -805,6 +812,7 @@ Begin {
     }
 
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
+
 }
 
 Process {
@@ -944,7 +952,31 @@ return true;
             }
             $Service.HttpHeaders.Add("X-AnchorMailbox", $MailboxName)
 
-            If ($CalendarOnly){
+            If ($CalendarLogCleanup)
+            {
+                #Define the FolderView used for Export should not be any larger then 1000 folders due to throttling
+                $FolderView =  New-Object Microsoft.Exchange.WebServices.Data.FolderView(1000)
+                #Deep Transval will ensure all folders in the search path are returned
+                $FolderView.Traversal = [Microsoft.Exchange.WebServices.Data.FolderTraversal]::Deep
+                #$FolderPropertySet = new-object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
+                $FolderPropertySet = new-object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::IdOnly)
+                $PR_Folder_Path = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition(26293, [Microsoft.Exchange.WebServices.Data.MapiPropertyType]::String)
+                #Add Properties to the Property Set
+                $FolderPropertySet.Add($PR_Folder_Path)
+                $FolderPropertySet.Add([Microsoft.Exchange.WebServices.Data.FolderSchema]::DisplayName)
+                $FolderView.PropertySet = $FolderPropertySet
+                $FolderResult = $null
+                $AllFolderResult = $null
+                #Bind to RecoverableItemsRoot
+                $RecoverableItemsRoot = new-object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::RecoverableItemsRoot,$MailboxName)
+                $FolderResult = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($Service,$RecoverableItemsRoot,$FolderPropertySet)
+                $AllFolderResult += $FolderResult
+                #find subfolders of RecoverableItemsRoot
+                $RootFolderId = new-object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::RecoverableItemsRoot,$MailboxName)
+                $FolderResult = $Service.FindFolders($RootFolderId,$FolderView)
+                $AllFolderResult = $FolderResult | Where-Object -FilterScript {$_.ExtendedProperties.Value -eq '\Recoverable Items\Calendar Logging'}
+            }
+            ElseIf ($CalendarOnly){
                 #Search only for Calendarfolder
                 $RootFolderId = new-object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::$RootFolder,$MailboxName)
                 #Define the FolderView used for Export should not be any larger then 1000 folders due to throttling
@@ -1063,6 +1095,7 @@ return true;
             $PidLidOldWhenStartWhole       = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x0029,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::SystemTime)
             $PidLidOldWhenEndWhole         = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::Meeting,0x002A,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::SystemTime)
             $PidTagResponseRequested       = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition(0x0063,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Boolean)
+            $ItemVersion                   = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition([Microsoft.Exchange.WebServices.Data.DefaultExtendedPropertySet]::CalendarAssistant, 0x0016,[Microsoft.Exchange.WebServices.Data.MapiPropertyType]::Integer)
 
             If ($AllItemProps){
                 $ItemPropset= new-object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
@@ -1119,6 +1152,8 @@ return true;
             $ItemPropset.Add($PidLidOldWhenEndWhole)
             $ItemPropset.Add($PidTagResponseRequested)
             $ItemPropset.Add($OrgClient)
+            $ItemPropset.Add($ItemVersion)
+            $ItemPropset.Add([Microsoft.Exchange.WebServices.Data.ItemSchema]::Attachments)
             
             #default searchfiltercollection
             $SearchFilterCollection = new-object  Microsoft.Exchange.WebServices.Data.SearchFilter+SearchFilterCollection([Microsoft.Exchange.WebServices.Data.LogicalOperator]::And)
@@ -1256,7 +1291,7 @@ return true;
             do {
                 #exclude Audit folder
                 $AllFolderResult = $AllFolderResult | Where-Object -FilterScript {$_.Displayname -ne 'Audits'}
-                [int]$i='1'
+                [System.Int32]$i = '1'
                 ForEach ($Folder in $AllFolderResult){
                     $ItemView =  New-Object Microsoft.Exchange.WebServices.Data.ItemView($ItemPageSize,0,[Microsoft.Exchange.WebServices.Data.OffsetBasePoint]::Beginning)
                     #Write-Host "Working on  $($Folder.DisplayName)"
@@ -1277,258 +1312,339 @@ return true;
                         $fpath = ConvertToString($hexString)
                     }
                     $FindItems = $null
-                    [int]$p= '0'
+                    [System.Int32]$p = '0'
                     do {
                         $FindItems = $Service.FindItems($Folder.Id,$SearchFilterCollection,$ItemView)
                         If ($FindItems.Items.Count -ge '1'){
-                            $Props = $service.LoadPropertiesForItems($FindItems,$ItemPropset)
+                            try {
+                                $Props = $service.LoadPropertiesForItems($FindItems,$ItemPropset)
+                            }
+                            catch{
+                                Write-Verbose "Could not load properties from items in folder $($Folder.DisplayName) "
+                                #create object
+                                $returnValue = New-Object -TypeName PSObject
+                                #get all properties from last error
+                                $ErrorProperties =$Error[0] | Get-Member -MemberType Property
+                                #add existing properties to object
+                                foreach ($Property in $ErrorProperties){
+                                    if ($Property.Name -eq 'InvocationInfo'){
+                                        $returnValue | Add-Member -Type NoteProperty -Name 'InvocationInfo' -Value $($Error[0].InvocationInfo.PositionMessage)
+                                    }
+                                    else {
+                                        $returnValue | Add-Member -Type NoteProperty -Name $($Property.Name) -Value $($Error[0].$($Property.Name))
+                                    }
+                                }
+                                #return object
+                                $returnValue
+                                break
+                            
+                            }
                             If (($Props.Result -notmatch 'Success' ).Count -gt 1)
                             {
                                 Write-Warning "Error occured while loading additional properties for folder $($Folder.DisplayName)!"
                                 Write-Warning 'Decreasing PageSize might avoid errors!'
                                 Write-Warning $($Props.get_ErrorCode() | group | Where-Object {$_.Name -ne 'NoError'} | sort Count| select Count,Name | Out-String)
                             }
-                            [int]$y='1'
-                            [int]$z= '0'
-                            If ($DestinationID){
-                                #create list
-                                Write-Verbose    "Create Generic.List for AlternateIDs"
-                                $GenList = ('System.Collections.Generic.List'+'`'+'1') -as 'Type'
-                                $GenList = $GenList.MakeGenericType('Microsoft.Exchange.WebServices.Data.AlternateIdBase' -as 'Type')
-                                $AltIdBases = [Activator]::CreateInstance($GenList)
-                                $FindItems.Items | ForEach{$AltIdBases.Add($(New-Object -TypeName Microsoft.Exchange.WebServices.Data.AlternateId -ArgumentList ('EWSId',$_.ID,$MailboxName)))}
-                                $Converted= $Service.ConvertIds($AltIdBases,"$DestinationID")
-                                If ($FindItems.Items.Count -eq 1){
-                                    If ($Converted.Result -ne 'Success'){
-                                        Write-Warning "1 item from folder $($Folder.DisplayName) couldn't be converted successful!"
-                                    }
-                                }
-                                Else {
-                                    If (($Converted.Result -ne 'Success').Count -gt 0){
-                                        Write-Warning "$(($Converted.Result -ne 'Success').Count) items from folder $($Folder.DisplayName) couldn't be converted successful!"
-                                    }
-                                }
-                                
-                            }
-                            ForEach ($Item in $FindItems.Items){
-                                Write-Progress `
-                                -id 2 `
-                                -ParentId 1 `
-                                -Activity "Processing item - $($Item.Subject)" `
-                                -PercentComplete ( $p / $FindItems.TotalCount * 100)`
-                                -Status "Total items: $($FindItems.TotalCount) remaining items: $($FindItems.TotalCount - $p) processing folder: $($Folder.DisplayName)"
-                                $data = New-Object -TypeName PSObject
-                                If ($DateFormat){
-                                    If ($SortByDateTimeCreated){
-                                        If ($UseLocalTime){
-                                            $data | add-member -type NoteProperty -Name DateTimeCreatedLocal -Value $( Get-Date $([System.TimeZone]::CurrentTimeZone.ToLocalTime($Item.DateTimeCreated.ToUniversalTime())) -Format $($DateFormat))
-                                        }
-                                        Else {
-                                            $data | add-member -type NoteProperty -Name DateTimeCreatedUTC -Value $( Get-Date $Item.DateTimeCreated.ToUniversalTime() -Format $($DateFormat))
-                                        }
-                                    }
-                                    If ($UseLocalTime){
-                                        $data | add-member -type NoteProperty -Name LastModifiedTimeLocal -Value $( Get-Date $([System.TimeZone]::CurrentTimeZone.ToLocalTime($Item.LastModifiedTime.ToUniversalTime())) -Format $($DateFormat))
-                                    }
-                                    Else{
-                                        $data | add-member -type NoteProperty -Name LastModifiedTimeUTC -Value $( Get-Date $Item.LastModifiedTime.ToUniversalTime() -Format $($DateFormat))
-                                    }
-                                }
-                                Else {
-                                    If ($SortByDateTimeCreated){
-                                        If ($UseLocalTime){
-                                            $data | add-member -type NoteProperty -Name DateTimeCreatedLocal -Value [System.TimeZone]::CurrentTimeZone.ToLocalTime($( Get-Date $Item.DateTimeCreated.ToUniversalTime() -Format $($culture.DateTimeFormat.FullDateTimePattern.ToString().Replace(':ss',':ss.fff'))))
-                                        }
-                                        Else {
-                                            $data | add-member -type NoteProperty -Name DateTimeCreatedUTC -Value $( Get-Date $Item.DateTimeCreated.ToUniversalTime() -Format $($culture.DateTimeFormat.FullDateTimePattern.ToString().Replace(':ss',':ss.fff')))
-                                        }
-                                    }
-                                    If ($UseLocalTime){
-                                        $data | add-member -type NoteProperty -Name LastModifiedTimeLocal -Value [System.TimeZone]::CurrentTimeZone.ToLocalTime($( Get-Date $Item.LastModifiedTime.ToUniversalTime() -Format $($culture.DateTimeFormat.FullDateTimePattern.ToString().Replace(':ss',':ss.fff'))))
-                                    }
-                                    Else{
-                                        $data | add-member -type NoteProperty -Name LastModifiedTimeUTC -Value $( Get-Date $Item.LastModifiedTime.ToUniversalTime() -Format $($culture.DateTimeFormat.FullDateTimePattern.ToString().Replace(':ss',':ss.fff')))
-                                    }
-                                }
-                                $data | add-member -type NoteProperty -Name Mailbox -Value $MailboxName
-                                If ($AllItemProps){
-                                    $data | add-member -type NoteProperty -Name Item -Value $Item
-                                    $data | add-member -type NoteProperty -Name LastModifiedName -Value $Item.LastModifiedName
-                                    $data | add-member -type NoteProperty -Name Creator -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '16376'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '16376'}).Value})
-                                    $data | add-member -type NoteProperty -Name Subject -Value $Item.Subject
-                                    $data | add-member -type NoteProperty -Name FolderPath -Value $fpath
-                                    $data | add-member -type NoteProperty -Name Client -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '11')-and ($_.PropertyDefinition.MapiType -eq 'String')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '11')-and ($_.PropertyDefinition.MapiType -eq 'String')}).Value})
-                                    $data | add-member -type NoteProperty -Name OriginClient -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.Name -eq 'ClientInfo')-and ($_.PropertyDefinition.MapiType -eq 'String')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.Name -eq 'ClientInfo')-and ($_.PropertyDefinition.MapiType -eq 'String')}).Value})
-                                    $data | add-member -type NoteProperty -Name Action -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}).Value})
-                                    $data | add-member -type NoteProperty -Name PidLidMeetingType -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '38')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}){ConvertFrom-PidLidMeetingType ($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '38')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}).Value})
-                                    $data | add-member -type NoteProperty -Name ItemClass -Value $Item.ItemClass
-                                    $data | add-member -type NoteProperty -Name 'PR_Processed' -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '32001'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '32001'}).Value})
-                                    $data | add-member -type NoteProperty -Name CalendarProcessed -Value ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '1'}).Value
+                            [System.Int32]$y= '1'
+                            [System.Int32]$z= '0'
+                            If ($CalendarLogCleanup)
+                            {
 
-                                    If(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}) -and ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'})){
-                                        Write-Verbose "Both properties exist. Will caculate start time..."
-                                        If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}){
-                                            $UTCTime = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}).Value
-                                            $TargetZone = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value
-                                            $StartValue = ConvertUTCTimeToTimeZone -UTCTime $UTCTime -TargetZone $TargetZone
-                                        }
-                                        If ($null -eq $StartValue){
-                                            $StartValue = $Item.Start
-                                        }
-                                        $data | add-member -type NoteProperty -Name Start -Value $StartValue
-                                    }
-                                    Else{
-                                        If ($null -ne $Item.Start){
-                                            $data | add-member -type NoteProperty -Name Start -Value $Item.Start
-                                        }
-                                        Else {
-                                            $data | add-member -type NoteProperty -Name Start -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}){"UTC:"+$($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}).Value })
-                                        }
+                                Write-Warning "All items will be deleted!"
+                                $Abort = [System.Management.Automation.Host.ChoiceDescription ]::new("&Abort","Abort the operation")
+                                $Continue = [System.Management.Automation.Host.ChoiceDescription ]::new("&Continue","Continue the operation")
+                                $Options = [System.Management.Automation.Host.ChoiceDescription[]] ($Abort,$Continue)
+                                $Prompt = 'Should I [A]bort or [C]ontinue?'
+                                $Ask = "Are you really sure delete these $($FindItems.Items.Count) items?"
+                                $choice = $host.ui.PromptForChoice($Ask,$Prompt,$Options,0)
+                                if ($choice -eq 1)
+                                {
+                                    #create list
+                                    $GenList = ('System.Collections.Generic.List'+'`'+'1') -as 'Type'
+                                    $GenList = $GenList.MakeGenericType('Microsoft.Exchange.WebServices.Data.ItemId' -as 'Type')
+                                    $ItemIDs = [Activator]::CreateInstance($GenList)
+
+                                    foreach ($Item in $FindItems.Items){
+                                        $ItemIDs.Add($Item.ID)
                                     }
 
-                                    $data | add-member -type NoteProperty -Name PidLidOldWhenStartWhole -Value $( If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '41')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '41')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}).Value} )
-
-                                    If (($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}) -and ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'})){
-                                        Write-Verbose "Both properties exist. Will caculate end time..."
-                                        If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}){
-                                            $UTCTime = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}).Value
-                                            $TargetZone = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value
-                                            $EndValue = ConvertUTCTimeToTimeZone -UTCTime $UTCTime -TargetZone $TargetZone
-                                        }
-                                        If ($null -eq $EndValue){
-                                            $EndValue = $Item.End
-                                        }
-                                        $data | add-member -type NoteProperty -Name End -Value $EndValue
-                                    }
-                                    Else {
-                                        If ($null -ne $Item.End){
-                                            $data | add-member -type NoteProperty -Name End -Value $Item.End
-                                        }
-                                        Else {
-                                            $data | add-member -type NoteProperty -Name End -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}){"UTC:"+$($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}).Value })
-                                        }
-                                    }
-
-                                    $data | add-member -type NoteProperty -Name PidLidOldWhenEndWhole -Value $( If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '42')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '42')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}).Value} )
-                                    $data | add-member -type NoteProperty -Name IsRecurring -Value $Item.IsRecurring
-                                    $data | add-member -type NoteProperty -Name IsException -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '10')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '10')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}).Value})
-                                    $data | add-member -type NoteProperty -Name Recurrence -Value $(Format-Recurrence -Item $Item)
-                                    $data | add-member -type NoteProperty -Name PidLidClientIntent -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '21'}){ConvertFrom-ClientIntent -ClientIntentValue ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '21'}).Value})
-                                    $data | add-member -type NoteProperty -Name PidLidChangeHighlight -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33284'}){ConvertFrom-ChangeHighlight -ChangeHighlightValue ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33284'}).Value})
-                                    $data | add-member -type NoteProperty -Name CleanGlobalObjectID -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '35') -and ($_.PropertyDefinition.MapiType -eq 'Binary')}){[System.BitConverter]::ToString(($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '35') -and ($_.PropertyDefinition.MapiType -eq 'Binary')}).Value) -Replace '-',''})
-                                    $data | add-member -type NoteProperty -Name GlobalObjectID -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '3'}){[System.BitConverter]::ToString(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '3'}).Value) -Replace '-',''})
-                                    If ($DestinationID){
-                                        $data | add-member -type NoteProperty -Name $AlternateIDName -Value $($Converted[$z].ConvertedId.UniqueId)
-                                        $z++
-                                    }
-                                    $data | add-member -type NoteProperty -Name ModifiedOccurences -Value $(If($Item.ModifiedOccurrences){[System.String]::Join(",",$($Item.ModifiedOccurrences | Select-Object -Property Start,End )) -replace "@{","" -replace "}","" -replace ";","" -replace ",",";"}) 
-                                    $data | add-member -type NoteProperty -Name DeletedOccurrences -Value $(If($Item.DeletedOccurrences){[System.String]::Join(";",$($Item.DeletedOccurrences| Select-Object -Property OriginalStart )) -replace "@{","" -replace "}",""})
-                                    $data | add-member -type NoteProperty -Name TimeZone -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value})
-                                    $data | add-member -type NoteProperty -Name CalendarOriginatorId -Value ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '24'}).Value
-                                    $data | add-member -type NoteProperty -Name HijackedMeeting -Value ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '25'}).Value
-                                    $data | add-member -type NoteProperty -Name ResponsibleUserName -Value ($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '10') -and ($_.PropertyDefinition.PropertySet -eq 'CalendarAssistant')}).Value
-                                    $data | add-member -type NoteProperty -Name PR_SENDER_EMAIL_ADDRESS -Value ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '3103'}).Value
-                                    $data | add-member -type NoteProperty -Name PR_SENT_REPRESENTING_EMAIL_ADDRESS -Value ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '101'}).Value
-                                    If (($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -match 'Estimated'}).Count -gt 0) {
-                                        #add EstimatedResponseCount
-                                        [System.String]$estimatedResponseCount = $null
-                                        $estimatedResponseCount = ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -match 'Estimated'} | ForEach{"$($_.PropertyDefinition.name):$($_.Value)"} ) -join '|'
-                                        $data | add-member -type NoteProperty -Name EstimatedResponseCount -Value $estimatedResponseCount
-                                    }
-
-                                    If ( ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'AttendeeListDetails'}).Count -gt 0 ) {
-                                        #convert binary to text
-                                        [System.Byte[]]$binVal = $null
-                                        $attendeeCol = @()
-                                        #get bin value
-                                        $binVal = ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'AttendeeListDetails'}).Value
-                                        #convert bin value to string
-                                        try {
-                                            $JsonString = ConvertFrom-Json $([System.Text.Encoding]::UTF8.GetString($binVal))
-                                            #get NoteProperty
-                                            [System.String[]]$entryNames = ( $JsonString | Get-Member -MemberType NoteProperty).Name
-                                            ForEach ($Name in $entryNames) {
-                                                $attendeeCol += $JsonString.$($Name) | Select-Object DisplayName,ResponseType,UtcReplyTime
-                                            }
-                                            $data | add-member -type NoteProperty -Name AttendeeListDetails -Value $(($attendeeCol | foreach{"$($_.DisplayName):$($_.ResponseType):$($_.UtcReplyTime)"}) -join '|')
-                                        }
-                                        catch
+                                    $DeleteMode = [Microsoft.Exchange.WebServices.Data.DeleteMode]::MoveToDeletedItems
+                                    $CancleMode = [Microsoft.Exchange.WebServices.Data.SendCancellationsMode]::SendToNone
+                                    $SupressRead = $true
+                                    [Microsoft.Exchange.WebServices.Data.ServiceResponseCollection[Microsoft.Exchange.WebServices.Data.ServiceResponse]]$Response = $Service.DeleteItems($ItemIDs,$DeleteMode,$CancleMode,$null,$SupressRead)
+    
+                                    [System.Int32]$ErrorCount = 0
+                                    [System.Int32]$WarningCount = 0
+                                    [System.Int32]$SuccessCount = 0
+    
+                                    foreach ($res in $Response.Result)
+                                    {
+                                        switch ($res)
                                         {
-                                            Write-Verbose "Couldn't convert AttendeeListDetails"
-                                            $data | add-member -type NoteProperty -Name AttendeeListDetails -Value "Error while computing"
+                                            [Microsoft.Exchange.WebServices.Data.ServiceResult]::Error { $ErrorCount++ }
+                                            [Microsoft.Exchange.WebServices.Data.ServiceResult]::Warning { $WarningCount++ }
+                                            [Microsoft.Exchange.WebServices.Data.ServiceResult]::Success { $SuccessCount++ }
                                         }
-                                        
                                     }
-
-                                    $data | add-member -type NoteProperty -Name UCMeetingSetting -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'UcMeetingSetting'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'UcMeetingSetting'}).Value})
-                                    $objcol += $data
                                 }
-                                Else {
-                                    $data | add-member -type NoteProperty -Name LastModifiedName -Value $Item.LastModifiedName
-                                    $data | add-member -type NoteProperty -Name Subject -Value $Item.Subject
-                                    $data | add-member -type NoteProperty -Name Client -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '11'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '11'}).Value})
-                                    $data | add-member -type NoteProperty -Name FolderPath -Value $fpath
-                                    $data | add-member -type NoteProperty -Name Action -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}).Value})
-                                    If(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}) -and ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'})){
-                                        Write-Verbose "Both properties exist. Will caculate start time..."
-                                        If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}){
-                                            $UTCTime = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}).Value
-                                            $TargetZone = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value
-                                            $StartValue = ConvertUTCTimeToTimeZone -UTCTime $UTCTime -TargetZone $TargetZone
-                                        }
-                                        If ($null -eq $StartValue){
-                                            $StartValue = $Item.Start
-                                        }
-                                        $data | add-member -type NoteProperty -Name Start -Value $StartValue
-                                    }
-                                    Else{
-                                        If ($null -ne $Item.Start){
-                                            $data | add-member -type NoteProperty -Name Start -Value $Item.Start
-                                        }
-                                        Else {
-                                            $data | add-member -type NoteProperty -Name Start -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}){"UTC:"+$($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}).Value })
-                                        }
-                                    }
 
-                                    If (($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}) -and ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'})){
-                                        Write-Verbose "Both properties exist. Will caculate end time..."
-                                        If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}){
-                                            $UTCTime = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}).Value
-                                            $TargetZone = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value
-                                            $EndValue = ConvertUTCTimeToTimeZone -UTCTime $UTCTime -TargetZone $TargetZone
+                                Write-Verbose "ItemCount=$($FindItems.Items.Count) Success=$($SuccessCount) Warning=$($WarningCount) Error=$($ErrorCount)"
+                                <##ForEach ($Item in $FindItems.Items)
+                                {
+                                    Write-Progress `
+                                        -id 2 `
+                                        -ParentId 1 `
+                                        -Activity "Processing item - $($Item.Subject)" `
+                                        -PercentComplete ( $p / $FindItems.TotalCount * 100)`
+                                        -Status "Total items: $($FindItems.TotalCount) remaining items: $($FindItems.TotalCount - $p) processing folder: $($Folder.DisplayName)"
+                                        #$Service.DeleteItems($FindItems.Items,[Microsoft.Exchange.WebServices.Data.DeleteMode]::MoveToDeletedItems,[Microsoft.Exchange.WebServices.Data.SendCancellationsMode]::SendToNone,true);
+                                        #$FindItems.Items
+                                    $Item.Delete([Microsoft.Exchange.WebServices.Data.DeleteMode]::MoveToDeletedItems,$true)
+                                }##>
+                            }
+                            Else
+                            {
+                                If ($DestinationID){
+                                    #create list
+                                    Write-Verbose    "Create Generic.List for AlternateIDs"
+                                    $GenList = ('System.Collections.Generic.List'+'`'+'1') -as 'Type'
+                                    $GenList = $GenList.MakeGenericType('Microsoft.Exchange.WebServices.Data.AlternateIdBase' -as 'Type')
+                                    $AltIdBases = [Activator]::CreateInstance($GenList)
+                                    $FindItems.Items | ForEach{$AltIdBases.Add($(New-Object -TypeName Microsoft.Exchange.WebServices.Data.AlternateId -ArgumentList ('EWSId',$_.ID,$MailboxName)))}
+                                    $Converted= $Service.ConvertIds($AltIdBases,"$DestinationID")
+                                    If ($FindItems.Items.Count -eq 1){
+                                        If ($Converted.Result -ne 'Success'){
+                                            Write-Warning "1 item from folder $($Folder.DisplayName) couldn't be converted successful!"
                                         }
-                                        If ($null -eq $EndValue){
-                                            $EndValue = $Item.End
-                                        }
-                                        $data | add-member -type NoteProperty -Name End -Value $EndValue
                                     }
                                     Else {
-                                        If ($null -ne $Item.End){
-                                            $data | add-member -type NoteProperty -Name End -Value $Item.End
+                                        If (($Converted.Result -ne 'Success').Count -gt 0){
+                                            Write-Warning "$(($Converted.Result -ne 'Success').Count) items from folder $($Folder.DisplayName) couldn't be converted successful!"
+                                        }
+                                    }
+                                    
+                                }
+                                ForEach ($Item in $FindItems.Items){
+                                    Write-Progress `
+                                    -id 2 `
+                                    -ParentId 1 `
+                                    -Activity "Processing item - $($Item.Subject)" `
+                                    -PercentComplete ( $p / $FindItems.TotalCount * 100)`
+                                    -Status "Total items: $($FindItems.TotalCount) remaining items: $($FindItems.TotalCount - $p) processing folder: $($Folder.DisplayName)"
+                                    $data = New-Object -TypeName PSObject
+                                    If ($DateFormat){
+                                        If ($SortByDateTimeCreated){
+                                            If ($UseLocalTime){
+                                                $data | add-member -type NoteProperty -Name DateTimeCreatedLocal -Value $( Get-Date $([System.TimeZone]::CurrentTimeZone.ToLocalTime($Item.DateTimeCreated.ToUniversalTime())) -Format $($DateFormat))
+                                            }
+                                            Else {
+                                                $data | add-member -type NoteProperty -Name DateTimeCreatedUTC -Value $( Get-Date $Item.DateTimeCreated.ToUniversalTime() -Format $($DateFormat))
+                                            }
+                                        }
+                                        If ($UseLocalTime){
+                                            $data | add-member -type NoteProperty -Name LastModifiedTimeLocal -Value $( Get-Date $([System.TimeZone]::CurrentTimeZone.ToLocalTime($Item.LastModifiedTime.ToUniversalTime())) -Format $($DateFormat))
+                                        }
+                                        Else{
+                                            $data | add-member -type NoteProperty -Name LastModifiedTimeUTC -Value $( Get-Date $Item.LastModifiedTime.ToUniversalTime() -Format $($DateFormat))
+                                        }
+                                    }
+                                    Else {
+                                        If ($SortByDateTimeCreated){
+                                            If ($UseLocalTime){
+                                                $data | add-member -type NoteProperty -Name DateTimeCreatedLocal -Value [System.TimeZone]::CurrentTimeZone.ToLocalTime($( Get-Date $Item.DateTimeCreated.ToUniversalTime() -Format $($culture.DateTimeFormat.FullDateTimePattern.ToString().Replace(':ss',':ss.fff'))))
+                                            }
+                                            Else {
+                                                $data | add-member -type NoteProperty -Name DateTimeCreatedUTC -Value $( Get-Date $Item.DateTimeCreated.ToUniversalTime() -Format $($culture.DateTimeFormat.FullDateTimePattern.ToString().Replace(':ss',':ss.fff')))
+                                            }
+                                        }
+                                        If ($UseLocalTime){
+                                            $data | add-member -type NoteProperty -Name LastModifiedTimeLocal -Value [System.TimeZone]::CurrentTimeZone.ToLocalTime($( Get-Date $Item.LastModifiedTime.ToUniversalTime() -Format $($culture.DateTimeFormat.FullDateTimePattern.ToString().Replace(':ss',':ss.fff'))))
+                                        }
+                                        Else{
+                                            $data | add-member -type NoteProperty -Name LastModifiedTimeUTC -Value $( Get-Date $Item.LastModifiedTime.ToUniversalTime() -Format $($culture.DateTimeFormat.FullDateTimePattern.ToString().Replace(':ss',':ss.fff')))
+                                        }
+                                    }
+                                    $data | add-member -type NoteProperty -Name Mailbox -Value $MailboxName
+                                    If ($AllItemProps){
+                                        $data | add-member -type NoteProperty -Name Item -Value $Item
+                                        $data | add-member -type NoteProperty -Name LastModifiedName -Value $Item.LastModifiedName
+                                        $data | add-member -type NoteProperty -Name Creator -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '16376'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '16376'}).Value})
+                                        $data | add-member -type NoteProperty -Name Subject -Value $Item.Subject
+                                        $data | add-member -type NoteProperty -Name FolderPath -Value $fpath
+                                        $data | add-member -type NoteProperty -Name Client -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '11')-and ($_.PropertyDefinition.MapiType -eq 'String')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '11')-and ($_.PropertyDefinition.MapiType -eq 'String')}).Value})
+                                        $data | add-member -type NoteProperty -Name OriginClient -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.Name -eq 'ClientInfo')-and ($_.PropertyDefinition.MapiType -eq 'String')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.Name -eq 'ClientInfo')-and ($_.PropertyDefinition.MapiType -eq 'String')}).Value})
+                                        $data | add-member -type NoteProperty -Name Action -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}).Value})
+                                        $data | add-member -type NoteProperty -Name PidLidMeetingType -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '38')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}){ConvertFrom-PidLidMeetingType ($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '38')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}).Value})
+                                        $data | add-member -type NoteProperty -Name ItemClass -Value $Item.ItemClass
+                                        $data | add-member -type NoteProperty -Name ItemVersion -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '22')-and ($_.PropertyDefinition.MapiType -eq 'Integer')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '22')-and ($_.PropertyDefinition.MapiType -eq 'Integer')}).Value})
+                                        $data | add-member -type NoteProperty -Name 'PR_Processed' -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '32001'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '32001'}).Value})
+                                        $data | add-member -type NoteProperty -Name CalendarProcessed -Value ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '1'}).Value
+    
+                                        If(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}) -and ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'})){
+                                            Write-Verbose "Both properties exist. Will caculate start time..."
+                                            If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}){
+                                                $UTCTime = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}).Value
+                                                $TargetZone = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value
+                                                $StartValue = ConvertUTCTimeToTimeZone -UTCTime $UTCTime -TargetZone $TargetZone
+                                            }
+                                            If ($null -eq $StartValue){
+                                                $StartValue = $Item.Start
+                                            }
+                                            $data | add-member -type NoteProperty -Name Start -Value $StartValue
+                                        }
+                                        Else{
+                                            If ($null -ne $Item.Start){
+                                                $data | add-member -type NoteProperty -Name Start -Value $Item.Start
+                                            }
+                                            Else {
+                                                $data | add-member -type NoteProperty -Name Start -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}){"UTC:"+$($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}).Value })
+                                            }
+                                        }
+    
+                                        $data | add-member -type NoteProperty -Name PidLidOldWhenStartWhole -Value $( If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '41')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '41')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}).Value} )
+    
+                                        If (($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}) -and ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'})){
+                                            Write-Verbose "Both properties exist. Will caculate end time..."
+                                            If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}){
+                                                $UTCTime = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}).Value
+                                                $TargetZone = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value
+                                                $EndValue = ConvertUTCTimeToTimeZone -UTCTime $UTCTime -TargetZone $TargetZone
+                                            }
+                                            If ($null -eq $EndValue){
+                                                $EndValue = $Item.End
+                                            }
+                                            $data | add-member -type NoteProperty -Name End -Value $EndValue
                                         }
                                         Else {
-                                            $data | add-member -type NoteProperty -Name End -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}){"UTC:"+$($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}).Value })
+                                            If ($null -ne $Item.End){
+                                                $data | add-member -type NoteProperty -Name End -Value $Item.End
+                                            }
+                                            Else {
+                                                $data | add-member -type NoteProperty -Name End -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}){"UTC:"+$($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}).Value })
+                                            }
                                         }
+    
+                                        $data | add-member -type NoteProperty -Name PidLidOldWhenEndWhole -Value $( If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '42')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '42')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}).Value} )
+                                        $data | add-member -type NoteProperty -Name IsRecurring -Value $Item.IsRecurring
+                                        $data | add-member -type NoteProperty -Name IsException -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '10')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}){($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '10')-and ($_.PropertyDefinition.PropertySet -eq 'Meeting')}).Value})
+                                        $data | add-member -type NoteProperty -Name Recurrence -Value $(Format-Recurrence -Item $Item)
+                                        $data | add-member -type NoteProperty -Name PidLidClientIntent -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '21'}){ConvertFrom-ClientIntent -ClientIntentValue ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '21'}).Value})
+                                        $data | add-member -type NoteProperty -Name PidLidChangeHighlight -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33284'}){ConvertFrom-ChangeHighlight -ChangeHighlightValue ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33284'}).Value})
+                                        $data | add-member -type NoteProperty -Name CleanGlobalObjectID -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '35') -and ($_.PropertyDefinition.MapiType -eq 'Binary')}){[System.BitConverter]::ToString(($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '35') -and ($_.PropertyDefinition.MapiType -eq 'Binary')}).Value) -Replace '-',''})
+                                        $data | add-member -type NoteProperty -Name GlobalObjectID -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '3'}){[System.BitConverter]::ToString(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '3'}).Value) -Replace '-',''})
+                                        If ($DestinationID){
+                                            $data | add-member -type NoteProperty -Name $AlternateIDName -Value $($Converted[$z].ConvertedId.UniqueId)
+                                            $z++
+                                        }
+                                        $data | add-member -type NoteProperty -Name ModifiedOccurences -Value $(If($Item.ModifiedOccurrences){[System.String]::Join(",",$($Item.ModifiedOccurrences | Select-Object -Property Start,End )) -replace "@{","" -replace "}","" -replace ";","" -replace ",",";"}) 
+                                        $data | add-member -type NoteProperty -Name DeletedOccurrences -Value $(If($Item.DeletedOccurrences){[System.String]::Join(";",$($Item.DeletedOccurrences| Select-Object -Property OriginalStart )) -replace "@{","" -replace "}",""})
+                                        $data | add-member -type NoteProperty -Name TimeZone -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value})
+                                        $data | add-member -type NoteProperty -Name CalendarOriginatorId -Value ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '24'}).Value
+                                        $data | add-member -type NoteProperty -Name HijackedMeeting -Value ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '25'}).Value
+                                        $data | add-member -type NoteProperty -Name ResponsibleUserName -Value ($Item.ExtendedProperties | Where-Object -FilterScript {($_.PropertyDefinition.id -eq '10') -and ($_.PropertyDefinition.PropertySet -eq 'CalendarAssistant')}).Value
+                                        $data | add-member -type NoteProperty -Name PR_SENDER_EMAIL_ADDRESS -Value ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '3103'}).Value
+                                        $data | add-member -type NoteProperty -Name PR_SENT_REPRESENTING_EMAIL_ADDRESS -Value ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Tag -eq '101'}).Value
+                                        If (($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -match 'Estimated'}).Count -gt 0) {
+                                            #add EstimatedResponseCount
+                                            [System.String]$estimatedResponseCount = $null
+                                            $estimatedResponseCount = ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -match 'Estimated'} | ForEach{"$($_.PropertyDefinition.name):$($_.Value)"} ) -join '|'
+                                            $data | add-member -type NoteProperty -Name EstimatedResponseCount -Value $estimatedResponseCount
+                                        }
+    
+                                        If ( ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'AttendeeListDetails'}).Count -gt 0 ) {
+                                            #convert binary to text
+                                            [System.Byte[]]$binVal = $null
+                                            $attendeeCol = @()
+                                            #get bin value
+                                            $binVal = ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'AttendeeListDetails'}).Value
+                                            #convert bin value to string
+                                            try {
+                                                $JsonString = ConvertFrom-Json $([System.Text.Encoding]::UTF8.GetString($binVal))
+                                                #get NoteProperty
+                                                [System.String[]]$entryNames = ( $JsonString | Get-Member -MemberType NoteProperty).Name
+                                                ForEach ($Name in $entryNames) {
+                                                    $attendeeCol += $JsonString.$($Name) | Select-Object DisplayName,ResponseType,UtcReplyTime
+                                                }
+                                                $data | add-member -type NoteProperty -Name AttendeeListDetails -Value $(($attendeeCol | foreach{"$($_.DisplayName):$($_.ResponseType):$($_.UtcReplyTime)"}) -join '|')
+                                            }
+                                            catch
+                                            {
+                                                Write-Verbose "Couldn't convert AttendeeListDetails"
+                                                $data | add-member -type NoteProperty -Name AttendeeListDetails -Value "Error while computing"
+                                            }
+                                            
+                                        }
+    
+                                        $data | add-member -type NoteProperty -Name UCMeetingSetting -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'UcMeetingSetting'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.Name -eq 'UcMeetingSetting'}).Value})
+                                        $objcol += $data
                                     }
-                                    $data | add-member -type NoteProperty -Name ItemClass -Value $Item.ItemClass
-                                    $data | add-member -type NoteProperty -Name CleanGlobalObjectID -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '35'}){[System.BitConverter]::ToString(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '35'}).Value) -Replace '-',''})
-                                    $data | add-member -type NoteProperty -Name Organizer -Value $Item.Organizer
-                                    $data | add-member -type NoteProperty -Name RequiredAttendees -Value $( If($Item.RequiredAttendees.Count -gt '0'){ [System.String]::Join(";",$($Item.RequiredAttendees| ForEach-Object -Process {$_.Address})) } )
-                                    $data | add-member -type NoteProperty -Name OptionalAttendees -Value $( If($Item.OptionalAttendees.Count -gt '0'){ [System.String]::Join(";",$($Item.OptionalAttendees| ForEach-Object -Process {$_.Address})) } )
-                                    $data | add-member -type NoteProperty -Name IsRecurring -Value $Item.IsRecurring
-                                    $data | add-member -type NoteProperty -Name DateTimeCreated -Value $Item.DateTimeCreated
-                                    $data | add-member -type NoteProperty -Name DateTimeReceived -Value $Item.DateTimeReceived
-                                    $data | add-member -type NoteProperty -Name DateTimeSent -Value $Item.DateTimeSent
-                                    $data | add-member -type NoteProperty -Name FolderID -Value $Folder.Id.UniqueId
-                                    $data | add-member -type NoteProperty -Name GlobalObjectID -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '3'}){[System.BitConverter]::ToString(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '3'}).Value) -Replace '-',''})
-                                    If ($DestinationID){
-                                        $data | add-member -type NoteProperty -Name $AlternateIDName -Value $($Converted[$z].ConvertedId.UniqueId)
-                                        $z++
+                                    Else {
+                                        $data | add-member -type NoteProperty -Name LastModifiedName -Value $Item.LastModifiedName
+                                        $data | add-member -type NoteProperty -Name Subject -Value $Item.Subject
+                                        $data | add-member -type NoteProperty -Name Client -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '11'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '11'}).Value})
+                                        $data | add-member -type NoteProperty -Name FolderPath -Value $fpath
+                                        $data | add-member -type NoteProperty -Name Action -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}){($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '6'}).Value})
+                                        If(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}) -and ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'})){
+                                            Write-Verbose "Both properties exist. Will caculate start time..."
+                                            If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}){
+                                                $UTCTime = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}).Value
+                                                $TargetZone = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value
+                                                $StartValue = ConvertUTCTimeToTimeZone -UTCTime $UTCTime -TargetZone $TargetZone
+                                            }
+                                            If ($null -eq $StartValue){
+                                                $StartValue = $Item.Start
+                                            }
+                                            $data | add-member -type NoteProperty -Name Start -Value $StartValue
+                                        }
+                                        Else{
+                                            If ($null -ne $Item.Start){
+                                                $data | add-member -type NoteProperty -Name Start -Value $Item.Start
+                                            }
+                                            Else {
+                                                $data | add-member -type NoteProperty -Name Start -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}){"UTC:"+$($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33293'}).Value })
+                                            }
+                                        }
+    
+                                        If (($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}) -and ($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'})){
+                                            Write-Verbose "Both properties exist. Will caculate end time..."
+                                            If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}){
+                                                $UTCTime = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}).Value
+                                                $TargetZone = $($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33332'}).Value
+                                                $EndValue = ConvertUTCTimeToTimeZone -UTCTime $UTCTime -TargetZone $TargetZone
+                                            }
+                                            If ($null -eq $EndValue){
+                                                $EndValue = $Item.End
+                                            }
+                                            $data | add-member -type NoteProperty -Name End -Value $EndValue
+                                        }
+                                        Else {
+                                            If ($null -ne $Item.End){
+                                                $data | add-member -type NoteProperty -Name End -Value $Item.End
+                                            }
+                                            Else {
+                                                $data | add-member -type NoteProperty -Name End -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}){"UTC:"+$($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '33294'}).Value })
+                                            }
+                                        }
+                                        $data | add-member -type NoteProperty -Name ItemClass -Value $Item.ItemClass
+                                        $data | add-member -type NoteProperty -Name CleanGlobalObjectID -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '35'}){[System.BitConverter]::ToString(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '35'}).Value) -Replace '-',''})
+                                        $data | add-member -type NoteProperty -Name Organizer -Value $Item.Organizer
+                                        $data | add-member -type NoteProperty -Name RequiredAttendees -Value $( If($Item.RequiredAttendees.Count -gt '0'){ [System.String]::Join(";",$($Item.RequiredAttendees| ForEach-Object -Process {$_.Address})) } )
+                                        $data | add-member -type NoteProperty -Name OptionalAttendees -Value $( If($Item.OptionalAttendees.Count -gt '0'){ [System.String]::Join(";",$($Item.OptionalAttendees| ForEach-Object -Process {$_.Address})) } )
+                                        $data | add-member -type NoteProperty -Name IsRecurring -Value $Item.IsRecurring
+                                        $data | add-member -type NoteProperty -Name DateTimeCreated -Value $Item.DateTimeCreated
+                                        $data | add-member -type NoteProperty -Name DateTimeReceived -Value $Item.DateTimeReceived
+                                        $data | add-member -type NoteProperty -Name DateTimeSent -Value $Item.DateTimeSent
+                                        $data | add-member -type NoteProperty -Name FolderID -Value $Folder.Id.UniqueId
+                                        $data | add-member -type NoteProperty -Name GlobalObjectID -Value $(If($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '3'}){[System.BitConverter]::ToString(($Item.ExtendedProperties | Where-Object -FilterScript {$_.PropertyDefinition.id -eq '3'}).Value) -Replace '-',''})
+                                        If ($DestinationID){
+                                            $data | add-member -type NoteProperty -Name $AlternateIDName -Value $($Converted[$z].ConvertedId.UniqueId)
+                                            $z++
+                                        }
+                                        $objcol += $data
                                     }
-                                    $objcol += $data
+                                    $y++
+                                    $p++
                                 }
-                                $y++
-                                $p++
                             }
                         }
 
