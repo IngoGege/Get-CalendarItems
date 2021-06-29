@@ -279,7 +279,7 @@ Param (
         Mandatory=$false,
         Position=24)]
     [System.String]
-    $ClientId = '0e4bf2e2-aa7d-46e8-aa12-263adeb3a62b',
+    $ClientId = 'd3590ed6-52b3-4102-aeff-aad2292ab01c',
 
     [Parameter(
         Mandatory=$false,
@@ -291,7 +291,7 @@ Param (
         Mandatory=$false,
         Position=26)]
     [System.Uri]
-    $RedirectUri ='https://microsoft.com/EwsEditor',
+    $RedirectUri ='urn:ietf:wg:oauth:2.0:oob',
 
     [Parameter(
         Mandatory=$false,
@@ -535,7 +535,7 @@ Begin {
         {
             If([System.String]::IsNullOrEmpty($ADALPath))
             {
-                $ADALPath = (Get-ChildItem -Path ($env:LOCALAPPDATA +'\Apps\2.0') -Recurse -Include Microsoft.IdentityModel.Clients.ActiveDirectory.dll | Select-Object -First 1)
+                $ADALPath = (Get-Module -Name ExchangeOnlineManagement -ListAvailable -Verbose:$false | select -First 1).FileList -match "Microsoft.IdentityModel.Clients.ActiveDirectory.dll"
             }
             Import-Module $ADALPath -Force 
         }
